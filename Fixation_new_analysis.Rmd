@@ -1,0 +1,552 @@
+---
+title: "Fixation new analysis"
+author: "Alberto Agnolin"
+date: "2025-11-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,      # hides the R code
+  message = FALSE,   # hides package startup messages
+  warning = FALSE,   # hides warnings
+  results = "hide",  # hides printed console outputs
+  dev = "svg"
+)
+```
+
+```{r Asymmetry scores calculation fixation, dev = "svg"}
+library(tidyverse)
+
+#fixation and Mohammad
+setwd("C:/Users/aagnoli/OneDrive - UvA/Fixation new analysis/new_PauseMeter_fixation")
+#Latif
+#setwd("C:/Users/aagnoli/OneDrive - UvA/fixation new analysis/FASTQ files centr_Cm Mohammad paper/processed files_Latif")
+
+#our fixation data
+files <- list.files(pattern = "\\pause_codon_output.csv$", full.names = TRUE)
+#e.coli Mohammad (Mg + direct freeze)
+#files <- list.files("E_coli_Mohammad/", pattern = "\\.csv", full.names = TRUE)
+#Latif
+#files <- list.files(pattern = "\\.csv", full.names = TRUE)
+
+# read them all into a list
+data_list <- lapply(files, read_csv)
+
+# define your own names in the same order as 'data_list'
+sample_names <- c("Cm", "Cm", "DSP", "DSP", "DSP+For", "DSP+For", "For", "For","Direct freeze + MgCl2", "Direct freeze + MgCl2", "MeOH", "MeOH", "Untreated", "Untreated", "Tet", "Tet")  # whatever you want
+#e.coli Mohammad
+#sample_names <- "L33 (Direct freeze + MgCl2)"
+#Latif
+#sample_names <- c("L3 (Centr. + Cm)")
+
+
+# add the 'Sample' column using your names
+data_list <- Map(function(df, name) {
+  df %>% mutate(sample = name)
+}, data_list, sample_names)
+
+combined <- do.call(rbind, data_list)
+
+#load gene_info_file and merge with input
+#B.subtilis
+gene_info_df <- read_csv("C:/Users/aagnoli/OneDrive - UvA/B. subtilis 168 annotation and genome files/gene_info_df.csv")
+#E.coli (Mohammad and Latif)
+#gene_info_df <- read_csv("C:/Users/aagnoli/OneDrive - UvA/B. subtilis 168 annotation and genome files/gene_info_df_e_coli.csv")
+
+for (i in data_list) {
+input_data_merge <- merge(select(combined, c("gene", "position", "strand", "gene", "count", "sample")), gene_info_df, by = "gene")
+
+#assign range value depending on whether the A-site-mapped count is in first or second part of the gene
+input_data_merge_ranges <- input_data_merge %>% 
+mutate(range = case_when(strand == 0 & position < (input_data_merge$gene_length/2) + input_data_merge$StartPosition ~ "first",
+                         strand == 0 & position > (input_data_merge$gene_length/2) + input_data_merge$StartPosition ~ "second",
+                         strand == 16 & position > (input_data_merge$gene_length/2) + input_data_merge$StartPosition ~ "first",
+                         strand == 16 & position < (input_data_merge$gene_length/2) + input_data_merge$StartPosition ~ "second",
+                         TRUE ~ "middle"))
+
+#calculate sum of counts in first and second half and RPF density per gene
+results <- input_data_merge_ranges %>% 
+  group_by(gene, range, gene_length, sample) %>% 
+  summarise(sum_counts = sum(count)) %>% 
+  pivot_wider(names_from = range, values_from = sum_counts) %>% 
+  mutate(density_per_nt = (sum(first, second, middle, na.rm = TRUE))/gene_length)
+
+#calculate log2 asymmetry score  
+results_asymmetry <- results %>% 
+  group_by(gene, density_per_nt, sample, gene_length) %>% 
+  filter(gene != "sdpB") %>% #filter out genes here if desired
+  summarise(log2_asymmetry_score = log2(second/first))
+
+}
+
+#plot log2 asymmetry scores of all genes
+plot_fixation <- ggplot(data = filter(results_asymmetry, density_per_nt >= 0.5), #density cutoff used by Mohammad et al.
+       mapping = aes(y = factor(sample, levels = c("Direct freeze + MgCl2", "Cm", "Tet", "MeOH", "DSP", "For", "DSP+For", "Untreated"),
+                                        labels = c("Direct freeze + MgCl2", "Cm", "Tet", "Meth", "DSP", "Form", "Form + DSP", "Ice only")),
+                     x = log2_asymmetry_score)) +
+  geom_boxplot() +
+  geom_vline(aes(xintercept = 0),
+  size = 1,
+  col = "red",
+  alpha = 0.6) +
+  theme(panel.grid.major = element_line(linetype = "blank"),
+        panel.grid.minor = element_line(linetype = "blank"),
+        panel.background = element_blank(),
+        axis.text.x = element_text(size = 11),
+       axis.text.y = element_text(size = 11),
+        axis.line = element_line(colour = "black")) +
+  labs(y = "", x = "Log2-Asymmetry Score") +
+  scale_x_continuous(limits = c(-5, 5))
+
+# #plot e coli and Latif
+# plot_Mohammad <- ggplot(data = filter(results_asymmetry, density_per_nt >= 0.5), #density cutoff used by Mohammad et al.
+#       mapping = aes(y = sample,
+#                     x = log2_asymmetry_score)) +
+#   geom_boxplot() +
+#   geom_vline(aes(xintercept = 0),
+#   size = 1,
+#   col = "red",
+#   alpha = 0.6) +
+#   theme(panel.grid.major = element_line(linetype = "blank"),
+#        panel.grid.minor = element_line(linetype = "blank"),
+#        panel.background = element_blank(),
+#        axis.text.x = element_text(size = 11),
+#        axis.text.y = element_text(size = 11),
+#        axis.line = element_line(colour = "black")) +
+#   labs(y = "", x = "Log2-Asymmetry Score") +
+#   scale_x_continuous(limits = c(-5, 5))
+
+#the plots below are made after running both the fixation datasets and then the e coli data from mohammad et al in order to combine them
+#plot_2_bis <- plot_2 +
+ # labs(x = element_blank()) +
+  #theme(axis.text.x = element_blank(),
+        #axis.ticks.x = element_blank(),
+   #     axis.line.x.top = element_line(colour = "black"))
+
+#patch_asymmetry_fixation <- plot_2_bis/plot_3 +
+#plot_layout(heights = c(5.2, 1))
+
+#export plot
+#px_w <- 500 
+#px_h <- 400
+#dpi <- 96           # or 72, depending on target
+#svg("log2-Asymmetry score fixation_strand.svg", width = px_w / dpi, height = px_h / dpi)
+#plot_1
+# close device (writes file)
+#dev.off()
+
+#patchwork plots
+patch_asymmetry_fixation <- plot_fixation/
+  plot_Latif/
+  plot_Mohammad +
+plot_layout(heights = c(5.2, 0.8, 0.8))
+
+patch_asymmetry_fixation
+```
+
+
+```{r codon pause scores bis, include=FALSE}
+
+library(tidyverse)
+library(readxl)
+library(patchwork)
+library(svglite)
+
+# ## This part is to generate a combined file for all ribosome profiles
+# 
+# #UvA
+# setwd("C:/Users/aagnoli/OneDrive - UvA/RNA sequencing data/Global analysis fixation conditions/Normalized by total number of reads")
+# 
+# # Load input files
+# files <- list.files("PauseMeter_fixation/", pattern = "\\pause_codon_output.csv$", full.names = TRUE)
+# 
+# # read them all into a list
+# data_list <- lapply(files, read_csv)
+# 
+# sample_names <- c("Cm", "Cm", "DSP", "DSP", "DSP+For", "DSP+For", "For", "For", "MeOH", "MeOH", "Untreated", "Untreated", "Tet", "Tet")
+# 
+# # add the 'Sample' column using your names
+# data_list <- Map(function(df, name) {
+#   df %>% mutate(Sample = name)
+# }, data_list, sample_names)
+# 
+# combined <- do.call(rbind, data_list)
+# 
+# write_csv(combined, "Combined_data_fixation.csv")
+# ##
+
+#UvA
+setwd("C:/Users/aagnoli/OneDrive - UvA/RNA sequencing data/Global analysis fixation conditions/Normalized by total number of reads")
+
+# Load gene info Bsubtilis
+gene_info_df <- read.csv("C:/Users/aagnoli/OneDrive - UvA/B. subtilis 168 annotation and genome files/gene_info_df.csv")
+
+# Read the Codon usage table
+Codon_usage_table <- read_excel("C:/Users/aagnoli/OneDrive - UvA/B. subtilis 168 annotation and genome files/B_subtilis_codon_usage_table.xlsx")
+
+#fixation data
+super_codonator_output_filtered <- read_csv("Combined_data_fixation.csv")
+
+#Calculate Codon Pause Score
+Codon_pause_score_df_A_site <- super_codonator_output_filtered %>% 
+group_by(A_site, Sample) %>% 
+summarise(Codon_pause_score_A_site = sum(Pause_score)) %>% 
+rename(Codon = A_site)
+Codon_pause_score_df_P_site <- super_codonator_output_filtered %>% 
+group_by(P_site, Sample) %>% 
+summarise(Codon_pause_score_P_site = sum(Pause_score)) %>% 
+rename(Codon = P_site)
+Codon_pause_score_df_E_site <- super_codonator_output_filtered %>% 
+group_by(E_site, Sample) %>% 
+summarise(Codon_pause_score_E_site = sum(Pause_score)) %>% 
+rename(Codon = E_site)
+
+Codon_pause_score_df <- merge(Codon_pause_score_df_A_site, 
+                              Codon_pause_score_df_E_site, by = c("Codon", "Sample")) %>% 
+merge(Codon_pause_score_df_P_site, by = c("Codon", "Sample"))
+super_codonator_output_filtered_ORFs <- super_codonator_output_filtered %>% 
+drop_na(A_site)
+
+Total_counts_ORFs <- sum(super_codonator_output_filtered_ORFs$Norm_count)
+
+Codon_pause_score_df <- Codon_pause_score_df %>% 
+mutate(Normalised_codon_pause_score_A_site = Codon_pause_score_df$Codon_pause_score_A_site/Total_counts_ORFs, 
+Normalised_codon_pause_score_P_site = Codon_pause_score_df$Codon_pause_score_P_site/Total_counts_ORFs, 
+Normalised_codon_pause_score_E_site = Codon_pause_score_df$Codon_pause_score_E_site/Total_counts_ORFs)
+  
+# Merge occupancy data frames with usage data frame
+Codon_pause_score_final <- merge(Codon_pause_score_df, Codon_usage_table, by = "Codon", all = TRUE) %>% 
+select(c(-"Codon_pause_score_A_site", -"Codon_pause_score_P_site", -"Codon_pause_score_E_site"))
+
+#adjust df
+combined_longer <- Codon_pause_score_final %>%
+  pivot_longer(
+    cols = starts_with("Normalised_codon_pause_score_"),
+    names_to = "Ribosomal_site",
+    values_to = "Normalised_codon_pause_score",
+    names_prefix = "Normalised_codon_pause_score_"
+  )
+
+#plot score of each codon in each ribosomal site
+
+ p <- ggplot(data = filter(combined_longer, Codon != 'TAA', Codon != "TAG", Codon != "TGA"),
+       mapping = aes(x = factor(Ribosomal_site, 
+                                levels = c('A_site', 'P_site', 'E_site'), 
+                                labels = c('A-site', 'P-site', 'E-site')),
+                     y = Codon)) +
+  geom_tile(mapping = aes(fill = Normalised_codon_pause_score), linewidth = 0.5, color = "black") +
+  scale_fill_gradient(low = 'red', high = 'yellow') +
+  theme_bw() +
+  scale_y_discrete(expand = c(0,0)) +
+  scale_x_discrete(expand = c(0,0)) +
+  #geom_text(aes(y = Codon, x = -0.1, hjust = -0.3, nudge_y = 0.3, label = `Amino Acid`, color = `Amino Acid`, size = 0.3), #add amino acid labels but it only works for single plots otherwise the spacing is all screwed
+   #         inherit.aes = FALSE, show.legend = FALSE, vjust = 1) +  
+  #coord_flip() +
+  theme(legend.position = "top", 
+  legend.direction = "horizontal",
+  axis.line = element_line(linetype = "solid")) +
+  labs(colour = "Sample",
+       x = "Ribosomal site",
+       y = "",
+       fill = "Pause score") + 
+  theme(axis.ticks = element_line(linewidth = 0.5),
+  panel.background = element_rect(fill = NA),
+  axis.line = element_line(linetype = "blank"),
+  panel.grid.major = element_line(colour = "gray89", linetype = "blank"), 
+  panel.grid.minor = element_line(linetype = "blank"),
+  axis.text.x = element_text(size = 12),
+  axis.text.y = element_text(size = 12)) +
+  facet_grid(~Sample)
+  
+  print(p)
+
+#check codon frequency in Bli for reference
+plot_codon_freq <- ggplot(data = filter(combined_longer, Codon != 'TAA', Codon != "TAG", Codon != "TGA", Ribosomal_site == "A_site"),
+       mapping = aes(x = Ribosomal_site,
+                     y = Codon)) + 
+  geom_tile(mapping = aes(fill = Usage), linewidth = 0.5, color = "black") +
+  scale_fill_gradient(low = 'red', high = 'yellow') +
+  scale_x_discrete(expand = c(0,0)) +
+  theme_bw() +
+  theme(legend.position = "top", 
+  legend.direction = "horizontal",
+  axis.line = element_line(linetype = "solid"),
+  axis.ticks = element_line(linewidth = 0.5),
+  panel.background = element_rect(fill = NA),
+  panel.grid.major = element_line(colour = "gray89", linetype = "blank"), 
+  panel.grid.minor = element_line(linetype = "blank"),
+  axis.text.x = element_text(size = 12),
+  axis.text.y = element_text(size = 12),) +
+  labs(x = "Codon Frequency Bli",
+  y = "", 
+  fill = "Frequency",
+  title = "Codon Frequency in Bli genome")
+
+
+patchwork_pausing <- p | plot_codon_freq +
+  plot_layout(widths = c(1, 2.8))
+
+patchwork_pausing
+
+```
+
+
+```{r new metagene method}
+library(tidyverse)
+
+#fixation
+setwd("C:/Users/aagnoli/OneDrive - UvA/Fixation new analysis")
+#Latif
+#setwd("C:/Users/aagnoli/OneDrive - UvA/fixation new analysis/FASTQ files centr_Cm Mohammad paper/processed files_Latif")
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(patchwork)
+
+# Load gene info Bli
+#Bsubtilis
+gene_info_df <- read.csv("C:/Users/aagnoli/OneDrive - UvA/B. subtilis 168 annotation and genome files/gene_info_df.csv")
+
+gene_ranges <- gene_info_df %>%
+    mutate(
+      range_min = if_else(
+        Strand == "+",
+        StartPosition - 20,
+        EndPosition + 1
+      ),
+      range_max = if_else(
+        Strand == "+",
+        StartPosition - 1,
+        EndPosition + 20
+      )
+    )
+
+# Load input files
+files <- list.files("new_PauseMeter_fixation_for_metagene/PauseMeter_35", pattern = "\\pause_codon_output.csv$", full.names = TRUE) #change folder to PauseMeter53 for offset direction
+
+#Latif
+#files <- list.files("PauseMeter_Latif/", pattern = "\\pause_codon_output.csv$", full.names = TRUE)
+
+#initialize results list
+result_metagene_summary_list <- list()
+
+# read them all into a list
+for (i in files) {
+  input_data <- read_csv(i, show_col_types = F)
+  
+  #load file name
+  input_file_name <- tools::file_path_sans_ext(basename(i))
+  
+  # make copies and ensure types
+  DT_in  <- copy(as.data.table(input_data))
+  DT_gen <- copy(as.data.table(gene_ranges))
+  
+  # ensure numeric
+  DT_in[, position := as.integer(position)]
+  DT_gen[, range_min := as.integer(range_min)]
+  DT_gen[, range_max := as.integer(range_max)]
+  
+  # fix any inverted ranges (just in case)
+  DT_gen[, `:=`(
+    rmin = pmin(range_min, range_max),
+    rmax = pmax(range_min, range_max)
+  )]
+  DT_gen[, `:=`(range_min = rmin, range_max = rmax)]
+  DT_gen[, c("rmin","rmax") := NULL]
+  
+  # add original row id to DT_in so we can update later
+  DT_in[, .orig_row := .I]
+  
+  # subset only rows that actually need matching (NA locus_tag)
+  DT_to_match <- DT_in[is.na(locus_tag), .( .orig_row, genome, position )]
+  DT_to_match[, pos_start := position]
+  DT_to_match[, pos_end   := position]
+  
+  # set keys for foverlaps (on interval columns)
+  setkey(DT_gen, range_min, range_max)
+  setkey(DT_to_match, pos_start, pos_end)
+  
+  # do the overlap join (nomatch = 0 => drop unmatched)
+  ov <- foverlaps(DT_to_match, DT_gen, by.x = c("pos_start","pos_end"), by.y = c("range_min","range_max"), nomatch = 0L)
+  
+  # if you have 'genome' / chromosome, and want to require equality, filter:
+  # ov <- ov[genome == i.genome]  # adjust column names if necessary
+  
+  # pick single match per original row (if overlaps happen) — choose first match
+  ov_one <- ov[order(.orig_row)][, .SD[1], by = .orig_row]
+  
+  # update original table in place (only NA locus_tag rows)
+  # ov_one has gene info columns (from DT_gen); update columns you want
+  DT_in[ov_one$.orig_row, `:=`(
+    locus_tag   = ov_one$locus_tag,
+    gene        = ov_one$gene,
+    gene_length = ov_one$gene_length
+  )]
+  
+  # cleanup
+  DT_in[, .orig_row := NULL]
+  result <- DT_in
+  
+  result <- result %>% full_join(select(gene_ranges, c(locus_tag, Strand, StartPosition, EndPosition))) %>% 
+  mutate(relative_position = ifelse(strand == 0,
+                                         position - StartPosition,
+                                         EndPosition - position))
+
+  result_metagene <- result %>% filter(relative_position >= -20 & relative_position <= 200, gene != "yydF") #filter for any gene or mean RPF length here if desired
+
+#----
+result_metagene_summary <- result_metagene %>% group_by(relative_position) %>% 
+  summarise(Norm_count = sum(Norm_count), mean_len = round(mean(mean_len, na.rm = TRUE), digits = 0))
+
+#store results
+result_metagene_summary_list[[i]] <- result_metagene_summary 
+  
+}
+
+#results list
+sample_names <- c("Form + DSP", "DSP", "Form", "Meth", "Ice only", "Tet", "Cm", "Direct Freeze + MgCl2")
+
+# add the 'Sample' column using your names
+result_metagene_summary_list <- Map(function(df, name) {
+  df %>% mutate(Sample = name)
+}, result_metagene_summary_list, sample_names)
+
+results_metagene_combined <- do.call(rbind, result_metagene_summary_list)
+
+p <- ggplot(results_metagene_combined, aes(x = relative_position, y = Norm_count, colour = mean_len)) +
+geom_line(linewidth = 0.4) + #use 0.8 for zoomed plots (-20 to 20)
+geom_vline(xintercept = 0, linetype = "dashed", colour = "black", alpha = 0.6, linewidth = 0.7) +
+scale_x_continuous(limits = c(-20, 200)) +
+scale_y_continuous(limits = c(0, 72000)) + #use 72000 for 5-3 data
+scale_colour_viridis_c(option = "plasma") +  # nice colour gradient
+theme_bw() +
+  #theme(legend.direction = "horizontal",
+        #legend.title.position = "top") +
+labs(
+ x = "A-site position in genes",
+ y = "Weighted count",
+  colour = "Mean RPF length") +
+  facet_wrap(~factor(Sample, levels = c("Cm", "Tet", "Meth", "DSP", "Form", "Form + DSP", "Ice only", "Direct Freeze + MgCl2")), nrow = 4)
+
+# # ---- Weighted histogram plot ----
+  # p <- ggplot(result_metagene, aes(x = relative_position, weight = Norm_count)) +
+  # geom_histogram(binwidth = 1, alpha = 0.5, size = 0.05, fill = "gray") +
+  # geom_freqpoly(binwidth = 1, linewidth = 0.8) +
+  # geom_vline(xintercept = 0, linetype = "dashed",
+  #            colour = "black", alpha = 0.6, linewidth = 0.7) +
+  # scale_x_continuous(limits = c(-20, 100)) +
+  # #scale_y_continuous(expand = c(0,0), limits = c(1,60000)) + #62000 for ppGpp, 32000 for Bli
+  # theme_bw() +
+  # labs(x = "A-site position in genes", y = "Weighted count", title = substr(input_file_name, start = 12, stop = 9)) #start = 30, stop = 39
+
+
+# #export
+# library(svglite)
+#  svglite("metagene_fixation - ZOOM on start - NO_EPEX_35.svg", width = 16, height = 6)
+  p
+# # close device (writes file)
+#  dev.off()
+
+```
+
+```{r new metagene method - END OF GENES}
+library(tidyverse)
+
+#fixation
+setwd("C:/Users/aagnoli/OneDrive - UvA/Fixation new analysis")
+#Latif
+#setwd("C:/Users/aagnoli/OneDrive - UvA/fixation new analysis/FASTQ files centr_Cm Mohammad paper/processed files_Latif")
+
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(patchwork)
+
+# Load gene info Bli
+#Bsubtilis
+gene_info_df <- read.csv("C:/Users/aagnoli/OneDrive - UvA/B. subtilis 168 annotation and genome files/gene_info_df.csv")
+
+gene_ranges <- gene_info_df %>%
+    mutate(
+      range_min = if_else(
+        Strand == "+",
+        StartPosition - 20,
+        EndPosition + 1
+      ),
+      range_max = if_else(
+        Strand == "+",
+        StartPosition - 1,
+        EndPosition + 20
+      )
+    )
+
+# Load input files
+files <- list.files("new_PauseMeter_fixation_for_metagene/PauseMeter_35", pattern = "\\pause_codon_output.csv$", full.names = TRUE) #change folder to PauseMeter53 for offset direction
+
+#Latif
+#files <- list.files("PauseMeter_Latif/", pattern = "\\pause_codon_output.csv$", full.names = TRUE)
+
+#initialize results list
+result_metagene_summary_list <- list()
+
+# read them all into a list
+for (i in files) {
+  input_data <- read_csv(i, show_col_types = F)
+  
+  #load file name
+  input_file_name <- tools::file_path_sans_ext(basename(i))
+  
+  result <- input_data %>% full_join(gene_info_df, by = "gene") %>% 
+  mutate(relative_position = ifelse(strand == 0,
+                                         position - EndPosition,
+                                         StartPosition - position))
+
+  result_metagene <- result %>% filter(relative_position >= -300 & relative_position <= 0, gene != "yydF") #filter for any gene or mean RPF length here if desired
+
+#----
+result_metagene_summary <- result_metagene %>% group_by(relative_position) %>% 
+  summarise(Norm_count = sum(Norm_count), mean_len = round(mean(mean_len, na.rm = TRUE), digits = 0))
+  
+# store results  
+result_metagene_summary_list[[i]] <- result_metagene_summary 
+
+}
+
+#results list
+sample_names <- c("Form + DSP", "DSP", "Form", "Meth", "Ice only", "Tet", "Cm", "Direct Freeze + MgCl2")
+
+# add the 'Sample' column using your names
+result_metagene_summary_list <- Map(function(df, name) {
+  df %>% mutate(Sample = name)
+}, result_metagene_summary_list, sample_names)
+
+results_metagene_combined <- do.call(rbind, result_metagene_summary_list)
+
+p <- ggplot(results_metagene_combined, aes(x = relative_position, y = Norm_count, colour = mean_len)) +
+geom_line(linewidth = 0.4) + 
+geom_vline(xintercept = 0, linetype = "dashed", colour = "black", alpha = 0.6, linewidth = 0.7) +
+scale_x_continuous(limits = c(-150, 0)) +
+#scale_y_continuous(limits = c(0, 10000)) +
+scale_colour_viridis_c(option = "plasma") +  # nice colour gradient
+theme_bw() +
+  theme(legend.direction = "horizontal",
+        legend.title.position = "top") +
+labs(
+ x = "A-site position in genes",
+ y = "Weighted count",
+  colour = "Mean RPF length") +
+  facet_wrap(~factor(Sample, levels = c("Cm", "Tet", "Meth", "DSP", "Form", "Form + DSP", "Ice only", "Direct Freeze + MgCl2")),
+nrow = 4)
+ 
+#export
+#library(svglite)
+ #svglite("metagene_fixation - ZOOM on start - NO_EPEX_35.svg", width = 16, height = 6)
+ p
+# close device (writes file)
+ #dev.off()
+
+```
