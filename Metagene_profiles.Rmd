@@ -1,0 +1,202 @@
+---
+title: "Metagene_profiles"
+author: "Alberto Agnolin"
+output: html_document
+---
+
+The following script is used to produce metagene profiles for Ribo-seq data starting from output files obtained with alt_predict_v2 (©Frans van der Kloet; <https://github.com/BiosystemsDataAnalysis/PausePredictionTools.git>)
+
+Input files are obtained after normalising alt_predict_v2 output files with Normalize_alt_predict.R (<https://github.com/aagnolin/PauseMeter>)
+
+# Metagene profiles - START of genes
+```{r Metagene profiles - START of genes}
+library(tidyverse)
+library(data.table)
+library(readr)
+library(patchwork)
+
+#set directory
+setwd("your_directory")
+
+#Load gene info Bli
+gene_info_df <- read.csv("your_directory/gene_info_df.csv") #file made with CreateGeneInfo.R (see PauseMeter repository link above) 
+
+gene_ranges <- gene_info_df %>%
+    mutate(
+      range_min = if_else(
+        Strand == "+",
+        StartPosition - 20,
+        EndPosition + 1
+      ),
+      range_max = if_else(
+        Strand == "+",
+        StartPosition - 1,
+        EndPosition + 20
+      )
+    )
+
+#Load input files
+files <- list.files("your_directory/.csv$", full.names = TRUE) #make sure your directory does not contain .csv files other than the normalized alt_predict_v2 ones
+
+#initialize results list
+result_metagene_summary_list <- list()
+
+#read files into a list
+for (i in files) {
+  input_data <- read_csv(i, show_col_types = F)
+  
+  #load file name
+  input_file_name <- tools::file_path_sans_ext(basename(i))
+  
+  #make copies and ensure types
+  DT_in  <- copy(as.data.table(input_data))
+  DT_gen <- copy(as.data.table(gene_ranges))
+  
+  #ensure numeric
+  DT_in[, position := as.integer(position)]
+  DT_gen[, range_min := as.integer(range_min)]
+  DT_gen[, range_max := as.integer(range_max)]
+  
+  #fix any inverted ranges
+  DT_gen[, `:=`(
+    rmin = pmin(range_min, range_max),
+    rmax = pmax(range_min, range_max)
+  )]
+  DT_gen[, `:=`(range_min = rmin, range_max = rmax)]
+  DT_gen[, c("rmin","rmax") := NULL]
+  
+  #add original row id to DT_in to update later
+  DT_in[, .orig_row := .I]
+  
+  #subset only rows that actually need matching (NA locus_tag)
+  DT_to_match <- DT_in[is.na(locus_tag), .( .orig_row, genome, position )]
+  DT_to_match[, pos_start := position]
+  DT_to_match[, pos_end   := position]
+  
+  #set keys for foverlaps (on interval columns)
+  setkey(DT_gen, range_min, range_max)
+  setkey(DT_to_match, pos_start, pos_end)
+  
+  #perform overlap join (nomatch = 0 => drop unmatched)
+  ov <- foverlaps(DT_to_match, DT_gen, by.x = c("pos_start","pos_end"), by.y = c("range_min","range_max"), nomatch = 0L)
+  
+  #pick single match per original row (if overlaps happen) — choose first match
+  ov_one <- ov[order(.orig_row)][, .SD[1], by = .orig_row]
+  
+  #update original table in place (only NA locus_tag rows)
+  #ov_one has gene info columns (from DT_gen); update columns you want
+  DT_in[ov_one$.orig_row, `:=`(
+    locus_tag   = ov_one$locus_tag,
+    gene        = ov_one$gene,
+    gene_length = ov_one$gene_length
+  )]
+  
+  #cleanup
+  DT_in[, .orig_row := NULL]
+  result <- DT_in
+  
+  #join with gene_ranges and calculate relative position
+  result <- result %>% 
+    full_join(select(gene_ranges, c(locus_tag, Strand, StartPosition, EndPosition))) %>%
+    mutate(relative_position = ifelse(strand == 0,
+                                      position - StartPosition,
+                                      EndPosition - position))
+
+  result_metagene <- result %>% 
+    filter(relative_position >= -20 & relative_position <= 200) #filter for any gene or mean RPF length here if desired
+  
+  result_metagene_summary <- result_metagene %>% 
+  group_by(relative_position) %>% 
+  summarise(Norm_count = sum(Norm_count), mean_len = round(mean(mean_len, na.rm = TRUE), digits = 0))
+  
+  #store results
+  result_metagene_summary_list[[i]] <- result_metagene_summary 
+  
+}
+
+#choose sample names
+sample_names <- c("name1", "name2") #write here the sample name of each processed file (ensure that the order is correct, so run names(files) to check) 
+
+#add the 'Sample' column using your names
+result_metagene_summary_list <- Map(function(df, name) {
+  df %>% mutate(Sample = name)
+}, result_metagene_summary_list, sample_names)
+
+#combine metagene calculation results into a final table
+results_metagene_combined <- do.call(rbind, result_metagene_summary_list)
+```
+
+The final table `results_metagene_combined` can be used for plotting the metagene profile of the start of genes.
+
+# Metagene profiles - END of genes
+```{r Metagene profiles - END of genes}
+library(tidyverse)
+library(data.table)
+library(readr)
+library(patchwork)
+
+#set directory
+setwd("your_directory")
+
+#Load gene info Bli
+gene_info_df <- read.csv("your_directory/gene_info_df.csv") #file made with CreateGeneInfo.R (see PauseMeter repository link above) 
+
+gene_ranges <- gene_info_df %>%
+    mutate(
+      range_min = if_else(
+        Strand == "+",
+        StartPosition - 20,
+        EndPosition + 1
+      ),
+      range_max = if_else(
+        Strand == "+",
+        StartPosition - 1,
+        EndPosition + 20
+      )
+    )
+
+#Load input files
+files <- list.files("your_directory/.csv$", full.names = TRUE) #make sure your directory does not contain .csv files other than the normalized alt_predict_v2 ones
+
+#initialize results list
+result_metagene_summary_list <- list()
+
+# read them all into a list
+for (i in files) {
+  input_data <- read_csv(i, show_col_types = F)
+  
+  #load file name
+  input_file_name <- tools::file_path_sans_ext(basename(i))
+  
+  #join with gene_ranges and calculate relative position
+  result <- input_data %>% 
+    full_join(gene_info_df, by = "gene") %>% 
+    mutate(relative_position = ifelse(strand == 0,
+                                      position - EndPosition,
+                                      StartPosition - position))
+  
+  result_metagene <- result %>% 
+    filter(relative_position >= -300 & relative_position <= 0, gene != "yydF") #filter for any gene or mean RPF length here if desired
+  
+  result_metagene_summary <- result_metagene %>% 
+  group_by(relative_position) %>% 
+  summarise(Norm_count = sum(Norm_count), mean_len = round(mean(mean_len, na.rm = TRUE), digits = 0))
+  
+  # store results  
+  result_metagene_summary_list[[i]] <- result_metagene_summary 
+
+}
+
+#choose sample names
+sample_names <- c("name1", "name2") #write here the sample name of each processed file (ensure that the order is correct, so run names(files) to check) 
+
+#add the 'Sample' column using your names
+result_metagene_summary_list <- Map(function(df, name) {
+  df %>% mutate(Sample = name)
+}, result_metagene_summary_list, sample_names)
+
+#combine metagene calculation results into a final table
+results_metagene_combined <- do.call(rbind, result_metagene_summary_list)
+```
+
+The final table `results_metagene_combined` can be used for plotting the metagene profile of the end of genes.
